@@ -10,24 +10,42 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 load_dotenv()
-if "API_KEY" in st.secrets:
-    headers={
-        "authorization":st.secrets["API_KEY"],
-        "content-type":"application/json"
-    }
-    API_KEY = st.secrets["API_KEY"]
-else:
-    API_KEY = os.getenv("API_KEY") 
+
+# Proper API key handling with st.secrets and fallback
+def get_api_key():
+    """Safely retrieve API key from Streamlit secrets or environment variables."""
+    try:
+        # Try to get from Streamlit secrets first (for deployed apps)
+        if hasattr(st, 'secrets') and "API_KEY" in st.secrets:
+            return st.secrets["API_KEY"]
+    except Exception:
+        pass
+    
+    # Fallback to environment variable (for local development)
+    api_key = os.getenv("API_KEY")
+    
+    if not api_key:
+        st.error("❌ API Key not found! Please set up your TMDB API key.")
+        st.info("""
+        **For local development:** Add `API_KEY=your_key_here` to your `.env` file
+        
+        **For deployment:** Add your API key to Streamlit secrets:
+        1. Go to App settings → Secrets
+        2. Add: `API_KEY = "your_key_here"`
+        """)
+        st.stop()
+    
+    return api_key
+
+API_KEY = get_api_key()
 
 CACHE_FILE = "poster_cache.json"
-
 
 if os.path.exists(CACHE_FILE):
     with open(CACHE_FILE, "r") as f:
         poster_cache = json.load(f)
 else:
     poster_cache = {}
-
 
 def create_session():
     """Create a requests session with retry logic and connection pooling."""
@@ -53,14 +71,12 @@ def create_session():
     
     return session
 
-
 API_SESSION = create_session()
 
 @st.cache_data(ttl=None)
 def fetch_poster(movie_id):
     """Fetch poster URL from TMDB API with local caching and error handling."""
     movie_id = str(movie_id)
-    
     
     if movie_id in poster_cache:
         return poster_cache[movie_id]
@@ -77,9 +93,7 @@ def fetch_poster(movie_id):
 
         poster_url = "https://image.tmdb.org/t/p/w500" + data["poster_path"]
         
-        
         poster_cache[movie_id] = poster_url
-        
         
         with open(CACHE_FILE, "w") as f:
             json.dump(poster_cache, f)
@@ -94,19 +108,6 @@ def fetch_poster(movie_id):
         return None
     except Exception:
         return None
-
-
-@st.cache_data
-# def load_data():
-#     """Load movie data and similarity matrix."""
-#     with open("movies.pkl", "rb") as f:
-#         movies_df = pickle.load(f)
-#     movies_df = movies_df.reset_index(drop=True)
-    
-#     with open("similarity.pkl", "rb") as k:
-#         similarity = pickle.load(k,encoding="latin1")
-    
-#     return movies_df, similarity
 
 @st.cache_data
 def load_data():
@@ -136,12 +137,9 @@ def load_data():
 
     # Final validation
     if movies_df is None or similarity is None:
-        st.stop()  # Stop Streamlit execution to prevent cascading errors
+        st.stop()
 
     return movies_df, similarity
-
-
-
 
 movies_df, similarity = load_data()
 
@@ -158,7 +156,6 @@ def get_recommended_movie_indices(movie):
         return []
 
     distances = similarity[movie_index]
-    
     movie_list = sorted(list(enumerate(distances)), reverse=True, key=lambda x: x[1])[1:]
     
     return [i[0] for i in movie_list]
@@ -180,13 +177,12 @@ def fetch_recommendations_batch(movie_indices, start_idx, batch_size=5):
         recommended_movies.append(title)
         recommended_posters.append(poster_url)
         
-        
         if (i - start_idx + 1) % 5 == 0 and i < end_idx - 1:
             time.sleep(0.2)
     
     return recommended_movies, recommended_posters
 
-
+# Initialize session state
 if 'movies_to_show' not in st.session_state:
     st.session_state.movies_to_show = 5
 
@@ -212,7 +208,7 @@ def reset_movie_count():
     st.session_state.cached_names = []
     st.session_state.cached_posters = []
 
-
+# Page configuration
 st.set_page_config(
     page_title="Movie Recommender",
     page_icon="🎬",
@@ -221,7 +217,7 @@ st.set_page_config(
 
 st.title("🎬 Movie Recommender System")
 
-
+# Movie selection dropdown
 selected_movie = st.selectbox(
     "Select a movie:",
     movies_df["title"].values,
@@ -229,11 +225,10 @@ selected_movie = st.selectbox(
     placeholder="Search or select a movie...",
 )
 
-
+# Check if a different movie was selected
 if selected_movie and selected_movie != st.session_state.current_movie:
     st.session_state.current_movie = selected_movie
     reset_movie_count()
-    
     st.session_state.movie_indices = get_recommended_movie_indices(selected_movie)
 
 if selected_movie:
@@ -242,11 +237,10 @@ if selected_movie:
     if movie_indices:
         st.subheader("🎥 Recommended Movies:")
         
-        
         num_to_display = min(st.session_state.movies_to_show, len(movie_indices))
         num_already_cached = len(st.session_state.cached_names)
         
-        
+        # Fetch additional movies if needed
         if num_to_display > num_already_cached:
             with st.spinner(f"Loading {num_to_display - num_already_cached} more movies..."):
                 new_names, new_posters = fetch_recommendations_batch(
@@ -257,7 +251,7 @@ if selected_movie:
                 st.session_state.cached_names.extend(new_names)
                 st.session_state.cached_posters.extend(new_posters)
         
-        
+        # Display all cached movies
         for row_start in range(0, num_to_display, 5):
             cols = st.columns(5)
             for idx, col in enumerate(cols):
@@ -267,11 +261,10 @@ if selected_movie:
                         if st.session_state.cached_posters[movie_idx]:
                             st.image(st.session_state.cached_posters[movie_idx], use_container_width=True)
                         else:
-                            
                             st.markdown(
                                 """
                                 <div style="
-                                    background-color: 
+                                    background-color: #2d2d2d;
                                     height: 300px;
                                     display: flex;
                                     align-items: center;
@@ -285,15 +278,14 @@ if selected_movie:
                             )
                         st.caption(st.session_state.cached_names[movie_idx])
         
-        
+        # Show "More" button if there are more movies to display
         if num_to_display < len(movie_indices):
-            
-            col1,col2,col3=st.columns([2,1,2])
+            col1, col2, col3 = st.columns([2, 1, 2])
             with col2:
                 st.button(
                     "More",
                     on_click=increment_movies,
-                    use_container_width=False,
+                    use_container_width=True,
                     type="primary"
                 )
         else:
@@ -304,12 +296,12 @@ else:
     st.markdown(
         """
         <div style="
-            background-color: 
+            background-color: #1e1e1e;
             padding: 2rem;
             border-radius: 10px;
             text-align: center;
             font-size: 1.1rem;
-            border: 2px solid 
+            border: 2px solid #333;
         ">
             👋 <b>Welcome to Movie Recommender!</b><br><br>
             Please select a movie from the dropdown above to discover similar movies you might enjoy.
@@ -318,11 +310,11 @@ else:
         unsafe_allow_html=True,
     )
 
-
+# Footer
 st.markdown("---")
 st.markdown(
     """
-    <div style="text-align: center; color: 
+    <div style="text-align: center; color: #888; font-size: 0.9rem;">
         Powered by TMDB API | Built with Streamlit
     </div>
     """,
