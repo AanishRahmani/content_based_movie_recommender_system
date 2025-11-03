@@ -10,7 +10,14 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 load_dotenv()
-API_KEY = os.getenv("API_KEY")
+if "API_KEY" in st.secrets:
+    headers={
+        "authorization":st.secrets["API_KEY"],
+        "content-type":"application/json"
+    }
+    API_KEY = st.secrets["API_KEY"]
+else:
+    API_KEY = os.getenv("API_KEY") 
 
 CACHE_FILE = "poster_cache.json"
 
