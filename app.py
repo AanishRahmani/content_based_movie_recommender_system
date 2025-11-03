@@ -75,7 +75,7 @@ def create_session():
 
 API_SESSION = create_session()
 
-@st.cache_data(ttl=3600)  # Cache for 1 hour
+# @st.cache_data(ttl=3600)  
 def fetch_poster(movie_id):
     """Fetch poster URL from TMDB API with caching."""
     movie_id = str(movie_id)
