@@ -11,17 +11,15 @@ from urllib3.util.retry import Retry
 
 load_dotenv()
 
-# Proper API key handling with st.secrets and fallback
+# Proper API key handling
 def get_api_key():
     """Safely retrieve API key from Streamlit secrets or environment variables."""
     try:
-        # Try to get from Streamlit secrets first (for deployed apps)
         if hasattr(st, 'secrets') and "API_KEY" in st.secrets:
             return st.secrets["API_KEY"]
     except Exception:
         pass
     
-    # Fallback to environment variable (for local development)
     api_key = os.getenv("API_KEY")
     
     if not api_key:
@@ -39,13 +37,17 @@ def get_api_key():
 
 API_KEY = get_api_key()
 
-CACHE_FILE = "poster_cache.json"
-
-if os.path.exists(CACHE_FILE):
-    with open(CACHE_FILE, "r") as f:
-        poster_cache = json.load(f)
-else:
-    poster_cache = {}
+# Use session state for cache instead of file writing
+if 'poster_cache' not in st.session_state:
+    CACHE_FILE = "poster_cache.json"
+    if os.path.exists(CACHE_FILE):
+        try:
+            with open(CACHE_FILE, "r") as f:
+                st.session_state.poster_cache = json.load(f)
+        except Exception:
+            st.session_state.poster_cache = {}
+    else:
+        st.session_state.poster_cache = {}
 
 def create_session():
     """Create a requests session with retry logic and connection pooling."""
@@ -73,13 +75,14 @@ def create_session():
 
 API_SESSION = create_session()
 
-@st.cache_data(ttl=None)
+@st.cache_data(ttl=3600)  # Cache for 1 hour
 def fetch_poster(movie_id):
-    """Fetch poster URL from TMDB API with local caching and error handling."""
+    """Fetch poster URL from TMDB API with caching."""
     movie_id = str(movie_id)
     
-    if movie_id in poster_cache:
-        return poster_cache[movie_id]
+    # Check session state cache
+    if movie_id in st.session_state.poster_cache:
+        return st.session_state.poster_cache[movie_id]
 
     url = f"https://api.themoviedb.org/3/movie/{movie_id}?api_key={API_KEY}&language=en-US"
     
@@ -93,28 +96,24 @@ def fetch_poster(movie_id):
 
         poster_url = "https://image.tmdb.org/t/p/w500" + data["poster_path"]
         
-        poster_cache[movie_id] = poster_url
-        
-        with open(CACHE_FILE, "w") as f:
-            json.dump(poster_cache, f)
+        # Store in session state instead of file
+        st.session_state.poster_cache[movie_id] = poster_url
 
         return poster_url
 
-    except requests.exceptions.Timeout:
-        return None
-    except requests.exceptions.ConnectionError:
-        return None
-    except requests.exceptions.RequestException:
-        return None
     except Exception:
         return None
 
-@st.cache_data
+@st.cache_data(show_spinner=False)
 def load_data():
-    """Load movie data and similarity matrix safely across Python versions."""
-
+    """Load movie data and similarity matrix safely."""
+    
     def safe_pickle_load(file_path, description):
         """Helper to safely unpickle files with multiple fallbacks."""
+        if not os.path.exists(file_path):
+            st.error(f"❌ File not found: {file_path}")
+            st.stop()
+            
         try:
             with open(file_path, "rb") as f:
                 return pickle.load(f)
@@ -123,8 +122,8 @@ def load_data():
                 with open(file_path, "rb") as f:
                     return pickle.load(f, encoding="latin1")
             except Exception as e:
-                st.error(f"❌ Failed to load {description} from '{file_path}'.\n\nError: {e}")
-                return None
+                st.error(f"❌ Failed to load {description}: {str(e)}")
+                st.stop()
 
     movies_df = safe_pickle_load("movies.pkl", "movie data")
     similarity = safe_pickle_load("similarity.pkl", "similarity matrix")
@@ -132,19 +131,21 @@ def load_data():
     if movies_df is not None:
         try:
             movies_df = movies_df.reset_index(drop=True)
-        except Exception:
-            st.warning("⚠️ Could not reset index for movie dataframe.")
-
-    # Final validation
-    if movies_df is None or similarity is None:
-        st.stop()
+        except Exception as e:
+            st.error(f"❌ Error processing movie data: {str(e)}")
+            st.stop()
 
     return movies_df, similarity
 
-movies_df, similarity = load_data()
+# Load data at startup
+try:
+    movies_df, similarity = load_data()
+except Exception as e:
+    st.error(f"❌ Failed to initialize app: {str(e)}")
+    st.stop()
 
 def get_recommended_movie_indices(movie):
-    """Return sorted list of movie indices by similarity (fast, no API calls)."""
+    """Return sorted list of movie indices by similarity."""
     try:
         movie_index = movies_df[movies_df["title"] == movie].index[0]
     except IndexError:
